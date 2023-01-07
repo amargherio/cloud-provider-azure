@@ -19,6 +19,7 @@ package armclient
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"html"
 	"net"
@@ -594,6 +595,25 @@ func (c *Client) DeleteResourceAsync(ctx context.Context, resourceID string, dec
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+
+	if strings.Contains(resourceID, "Microsoft.Network/loadBalancers") &&
+		resp.StatusCode == http.StatusNoContent {
+		checkRequest, err := c.PrepareGetRequest(ctx, decorators...)
+		if err != nil {
+			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "deleteAsync.prepareLBCheck", resourceID, err.Error())
+			return nil, retry.NewError(false, err)
+		}
+		res, rerr := c.Send(ctx, checkRequest)
+		defer c.CloseResponse(ctx, res)
+		if rerr != nil {
+			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "deleteAsync.lbCheck", resourceID, rerr.Error())
+			return nil, rerr
+		}
+
+		if res.StatusCode != http.StatusOK {
+			return nil, retry.NewError(true, errors.New("Failed to delete load balancer"))
+		}
 	}
 
 	future, err := azure.NewFutureFromResponse(resp)
